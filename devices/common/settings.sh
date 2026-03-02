@@ -33,4 +33,12 @@ safe_sed "s/zonename='UTC'/zonename='Asia\/Singapore'/g" package/base-files/file
 # ttyd 免密登录
 safe_sed 's|/bin/login|/bin/login -f root|g' feeds/packages/utils/ttyd/files/ttyd.config
 
+# [Workaround] mbedtls + GCC 14 aarch64 编译错误
+# sha256.c ARM crypto 扩展与 musl fortify memset 内联冲突
+# 上游修复后可删除此段
+if [ -f "package/libs/mbedtls/Makefile" ]; then
+    sed -i 's/-Werror/-Wno-error/' package/libs/mbedtls/Makefile
+    echo "    ✓ mbedtls: 已应用 GCC 14 workaround"
+fi
+
 echo ">>> 通用设置应用完成"
