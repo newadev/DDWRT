@@ -1,0 +1,257 @@
+name: Build ImmortalWrt
+
+on:
+  push:
+    branches: [main]
+    paths: ['devices/**', '.github/workflows/build.yml']
+  workflow_dispatch:
+    inputs:
+      device:
+        description: '设备'
+        required: true
+        default: 'x86_64'
+        type: choice
+        options:
+          - x86_64
+          - netcore-n60-pro
+          - cudy-tr3000-v1
+          - glinet-gl-mt3000
+      clean:
+        description: '全新编译'
+        type: boolean
+        default: false
+
+env:
+  REPO_URL: https://github.com/immortalwrt/immortalwrt
+  REPO_BRANCH: master
+  TZ: Asia/Singapore
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    concurrency:
+      group: build-${{ inputs.device || 'x86_64' }}
+      cancel-in-progress: true
+    
+    steps:
+    #--------------------------------------------------
+    # 准备阶段
+    #--------------------------------------------------
+    - name: 检出代码
+      uses: actions/checkout@v6
+
+    - name: 解析设备参数
+      id: device
+      run: |
+        DEVICE="${{ inputs.device || 'x86_64' }}"
+        
+        # 设备映射表
+        declare -A DEVICES=(
+          ["x86_64"]="x86|64|x86_64|generic"
+          ["netcore-n60-pro"]="mediatek|filogic|aarch64_cortex-a53|netcore_n60-pro"
+          ["cudy-tr3000-v1"]="mediatek|filogic|aarch64_cortex-a53|cudy_tr3000-v1"
+          ["glinet-gl-mt3000"]="mediatek|filogic|aarch64_cortex-a53|glinet_gl-mt3000"
+        )
+        
+        IFS='|' read -r TARGET SUBTARGET ARCH PROFILE <<< "${DEVICES[$DEVICE]}"
+        
+        echo "device=$DEVICE" >> $GITHUB_OUTPUT
+        echo "target=$TARGET" >> $GITHUB_OUTPUT
+        echo "subtarget=$SUBTARGET" >> $GITHUB_OUTPUT
+        echo "arch=$ARCH" >> $GITHUB_OUTPUT
+        echo "profile=$PROFILE" >> $GITHUB_OUTPUT
+
+    - name: 释放磁盘空间 (Maximize Build Space)
+      uses: endersonmenezes/free-disk-space@v3
+      with:
+        remove_android: true
+        remove_dotnet: true
+        remove_haskell: true
+        remove_tool_cache: true
+        remove_swap: true
+        remove_packages: "azure-cli google-cloud-cli microsoft-edge-stable google-chrome-stable firefox postgresql* temurin-* *llvm* mysql* dotnet-sdk-*"
+        remove_packages_one_command: true
+        remove_folders: "/usr/share/swift /usr/share/miniconda /usr/share/az* /usr/local/lib/node_modules /usr/local/share/chromium /usr/local/share/powershell /usr/local/julia /usr/local/aws-cli /usr/local/aws-sam-cli /usr/share/gradle"
+        rm_cmd: "rmz"
+        rmz_version: "3.1.1"
+
+    - name: 初始化环境
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y ack antlr3 asciidoc autoconf automake autopoint binutils bison build-essential \
+          bzip2 ccache clang cmake cpio curl device-tree-compiler ecj fastjar flex gawk gettext gcc-multilib \
+          g++-multilib git gnutls-dev gperf haveged help2man intltool lib32gcc-s1 libc6-dev-i386 libelf-dev \
+          libfuse-dev libglib2.0-dev libgmp3-dev libltdl-dev libmpc-dev libmpfr-dev libncurses5-dev \
+          libncursesw5-dev libpython3-dev libreadline-dev libssl-dev libtool lld llvm lrzsz mkisofs msmtp \
+          nano ninja-build p7zip p7zip-full patch pkgconf python3 python3-pip python3-ply python3-pyelftools \
+          qemu-utils re2c rsync scons squashfs-tools subversion swig texinfo uglifyjs upx-ucl unzip vim wget xmlto xxd zlib1g-dev
+        sudo mkdir -p /workdir && sudo chown $USER:$GROUPS /workdir
+
+    #--------------------------------------------------
+    # 源码阶段
+    #--------------------------------------------------
+    - name: 克隆源码
+      working-directory: /workdir
+      run: |
+        git clone --depth=1 -b $REPO_BRANCH $REPO_URL immortalwrt
+        ln -sf /workdir/immortalwrt $GITHUB_WORKSPACE/immortalwrt
+        cd immortalwrt
+        echo "SRC=$PWD" >> $GITHUB_ENV
+        echo "HASH=$(git rev-parse --short HEAD)" >> $GITHUB_ENV
+        echo "CCACHE_DIR=$PWD/.ccache" >> $GITHUB_ENV
+
+    #--------------------------------------------------
+    # 缓存阶段
+    #--------------------------------------------------
+    - name: 恢复 Toolchain 缓存
+      if: ${{ inputs.clean != true }}
+      uses: actions/cache@v5
+      with:
+        path: |
+          /workdir/immortalwrt/staging_dir/toolchain-*
+          /workdir/immortalwrt/staging_dir/host
+        key: tc-${{ steps.device.outputs.target }}-${{ steps.device.outputs.subtarget }}-${{ env.HASH }}
+        restore-keys: tc-${{ steps.device.outputs.target }}-${{ steps.device.outputs.subtarget }}-
+
+    - name: 恢复 ccache 缓存
+      if: ${{ inputs.clean != true }}
+      uses: actions/cache@v5
+      with:
+        path: /workdir/immortalwrt/.ccache
+        key: cc-${{ steps.device.outputs.target }}-${{ steps.device.outputs.subtarget }}-${{ github.run_id }}
+        restore-keys: cc-${{ steps.device.outputs.target }}-${{ steps.device.outputs.subtarget }}-
+
+    - name: 恢复 dl 缓存
+      if: ${{ inputs.clean != true }}
+      uses: actions/cache@v5
+      with:
+        path: /workdir/immortalwrt/dl
+        key: dl-${{ hashFiles('devices/common/feeds.conf') }}
+        restore-keys: dl-
+
+    #--------------------------------------------------
+    # 配置阶段
+    #--------------------------------------------------
+    - name: 准备和加载 Feeds
+      run: |
+        cd $SRC
+        echo ">>> 加载 feeds.conf"
+        # 1. 尝试加载通用 feeds
+        if [ -f "$GITHUB_WORKSPACE/devices/common/feeds.conf" ]; then
+            cp "$GITHUB_WORKSPACE/devices/common/feeds.conf" feeds.conf.default
+        fi
+        # 2. 尝试加载设备专属 feeds (覆盖)
+        if [ -f "$GITHUB_WORKSPACE/devices/${{ inputs.device || 'x86_64' }}/feeds.conf" ]; then
+            cp "$GITHUB_WORKSPACE/devices/${{ inputs.device || 'x86_64' }}/feeds.conf" feeds.conf.default
+        fi
+        cat feeds.conf.default || true
+
+    - name: 更新 Feeds
+      run: cd $SRC && ./scripts/feeds update -a
+
+    - name: 安装 Feeds
+      run: cd $SRC && ./scripts/feeds install -a
+
+    - name: 应用自定义脚本 (Settings)
+      run: |
+        cd $SRC
+        # 1. 执行通用脚本
+        if [ -f "$GITHUB_WORKSPACE/devices/common/settings.sh" ]; then
+            chmod +x "$GITHUB_WORKSPACE/devices/common/settings.sh"
+            "$GITHUB_WORKSPACE/devices/common/settings.sh"
+        fi
+        # 2. 执行设备专属脚本
+        if [ -f "$GITHUB_WORKSPACE/devices/${{ inputs.device || 'x86_64' }}/settings.sh" ]; then
+            chmod +x "$GITHUB_WORKSPACE/devices/${{ inputs.device || 'x86_64' }}/settings.sh"
+            "$GITHUB_WORKSPACE/devices/${{ inputs.device || 'x86_64' }}/settings.sh"
+        fi
+
+    - name: 应用自定义补丁 (Patches)
+      run: |
+        cd $SRC
+        # 1. 挂载通用补丁
+        if [ -d "$GITHUB_WORKSPACE/devices/common/patches" ]; then
+            for p in "$GITHUB_WORKSPACE/devices/common/patches/"*.patch; do
+                [ -f "$p" ] && git apply "$p" || true
+            done
+        fi
+        # 2. 挂载设备专属补丁
+        if [ -d "$GITHUB_WORKSPACE/devices/${{ inputs.device || 'x86_64' }}/patches" ]; then
+            for p in "$GITHUB_WORKSPACE/devices/${{ inputs.device || 'x86_64' }}/patches/"*.patch; do
+                [ -f "$p" ] && git apply "$p" || true
+            done
+        fi
+
+    - name: 生成配置
+      run: |
+        cd $SRC
+        rm -f .config
+        
+        echo ">>> 加载配置文件"
+        # 1. 加载通用基础配置
+        if [ -f "$GITHUB_WORKSPACE/devices/common/base.config" ]; then
+            cat "$GITHUB_WORKSPACE/devices/common/base.config" >> .config
+        fi
+        
+        # 2. 加载设备专属配置
+        if [ -f "$GITHUB_WORKSPACE/devices/${{ inputs.device || 'x86_64' }}/target.config" ]; then
+            cat "$GITHUB_WORKSPACE/devices/${{ inputs.device || 'x86_64' }}/target.config" >> .config
+        fi
+
+        make defconfig
+
+    - name: 复制自定义文件 (Files)
+      run: |
+        cd $SRC
+        mkdir -p files
+        # 1. 复制通用文件
+        if [ -d "$GITHUB_WORKSPACE/devices/common/files" ]; then
+            cp -r "$GITHUB_WORKSPACE/devices/common/files/"* ./files/ 2>/dev/null || true
+        fi
+        # 2. 复制设备专属文件 (覆盖)
+        if [ -d "$GITHUB_WORKSPACE/devices/${{ inputs.device || 'x86_64' }}/files" ]; then
+            cp -r "$GITHUB_WORKSPACE/devices/${{ inputs.device || 'x86_64' }}/files/"* ./files/ 2>/dev/null || true
+        fi
+
+    #--------------------------------------------------
+    # 编译阶段
+    #--------------------------------------------------
+    - name: 下载软件包
+      run: cd $SRC && make download -j$(nproc) || make download -j1 V=s
+
+    - name: 编译固件
+      id: compile
+      run: |
+        cd $SRC
+        make -j$(nproc) || make -j1 V=s
+        echo "status=success" >> $GITHUB_OUTPUT
+
+    #--------------------------------------------------
+    # 发布阶段
+    #--------------------------------------------------
+    - name: 整理固件
+      if: steps.compile.outputs.status == 'success'
+      run: |
+        cd $SRC/bin/targets/${{ steps.device.outputs.target }}/${{ steps.device.outputs.subtarget }}
+        rm -rf packages *.buildinfo *.manifest *.json sha256sums
+        echo "FIRMWARE=$PWD" >> $GITHUB_ENV
+
+    - name: 上传 Artifacts
+      if: steps.compile.outputs.status == 'success'
+      uses: actions/upload-artifact@v6
+      with:
+        name: ${{ steps.device.outputs.device }}-${{ env.HASH }}
+        path: ${{ env.FIRMWARE }}
+        retention-days: 7
+
+    - name: 发布 Release
+      if: steps.compile.outputs.status == 'success'
+      uses: softprops/action-gh-release@v2
+      with:
+        tag_name: ${{ steps.device.outputs.device }}-${{ github.run_number }}
+        name: ${{ steps.device.outputs.device }} (${{ env.HASH }})
+        files: ${{ env.FIRMWARE }}/*

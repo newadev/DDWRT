@@ -1,0 +1,102 @@
+name: Check Source Update
+
+on:
+  # 每周五 UTC 时间 0:00 检查
+  schedule:
+    - cron: '0 0 * * 5'
+  
+  # 手动触发
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: write
+
+env:
+  REPO_URL: https://github.com/immortalwrt/immortalwrt
+  REPO_BRANCH: master
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    outputs:
+      has_update: ${{ steps.check.outputs.has_update }}
+      new_hash: ${{ steps.check.outputs.new_hash }}
+    
+    steps:
+    - name: 检出代码
+      uses: actions/checkout@v6
+      with:
+        fetch-depth: 1
+
+    - name: 检查上游更新
+      id: check
+      run: |
+        # 获取最新 commit hash
+        NEW_HASH=$(git ls-remote $REPO_URL refs/heads/$REPO_BRANCH | cut -f1 | head -c7)
+        echo "最新版本: $NEW_HASH"
+        echo "new_hash=$NEW_HASH" >> $GITHUB_OUTPUT
+        
+        # 读取上次记录的 hash
+        LAST_HASH=""
+        if [ -f ".last_source_hash" ]; then
+          LAST_HASH=$(cat .last_source_hash)
+        fi
+        echo "上次版本: $LAST_HASH"
+        
+        # 比较
+        if [ "$NEW_HASH" != "$LAST_HASH" ]; then
+          echo "检测到更新!"
+          echo "has_update=true" >> $GITHUB_OUTPUT
+        else
+          echo "没有更新"
+          echo "has_update=false" >> $GITHUB_OUTPUT
+        fi
+
+    - name: 记录新版本
+      if: steps.check.outputs.has_update == 'true'
+      run: |
+        echo "${{ steps.check.outputs.new_hash }}" > .last_source_hash
+        git config user.name "GitHub Action"
+        git config user.email "action@github.com"
+        git add -f .last_source_hash
+        git commit -m "chore: 更新源码版本记录 ${{ steps.check.outputs.new_hash }}" || true
+        git push || true
+
+  trigger-build:
+    needs: check
+    if: needs.check.outputs.has_update == 'true'
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: 触发编译
+      uses: actions/github-script@v8
+      with:
+        script: |
+          // 所有已注册的设备列表（与 build.yml 中的 options 保持一致）
+          const devices = ['x86_64', 'netcore-n60-pro', 'cudy-tr3000-v1', 'glinet-gl-mt3000'];
+          
+          console.log(`检测到上游更新，开始触发 ${devices.length} 台设备的编译...`);
+          
+          for (const device of devices) {
+            console.log(`  → 触发设备: ${device}`);
+            await github.rest.actions.createWorkflowDispatch({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              workflow_id: 'build.yml',
+              ref: 'main',
+              inputs: {
+                device: device,
+                clean: 'false'
+              }
+            });
+          }
+          
+          console.log(`全部 ${devices.length} 台设备的编译已触发!`);
+          
+          await core.summary
+            .addHeading('源码更新检测')
+            .addRaw(`检测到上游更新 (${process.env.NEW_HASH || 'unknown'})，已触发 ${devices.length} 台设备的编译: ${devices.join(', ')}。`)
+            .write();
+      env:
+        NEW_HASH: ${{ needs.check.outputs.new_hash }}
