@@ -35,9 +35,13 @@ safe_sed 's|/bin/login|/bin/login -f root|g' feeds/packages/utils/ttyd/files/tty
 
 # [Workaround] mbedtls + GCC 14 aarch64 编译错误
 # sha256.c ARM crypto 扩展与 musl fortify memset 内联冲突
+# -Werror 由 mbedtls 的 CMakeLists.txt 注入，需要修改 OpenWrt 的包 Makefile
 # 上游修复后可删除此段
 if [ -f "package/libs/mbedtls/Makefile" ]; then
-    sed -i 's/-Werror/-Wno-error/' package/libs/mbedtls/Makefile
+    # 方法1: 在 OpenWrt Makefile 中添加 CMAKE 选项禁用致命警告
+    sed -i '/CMAKE_OPTIONS/a\\t-DMBEDTLS_FATAL_WARNINGS=OFF \\' package/libs/mbedtls/Makefile
+    # 方法2: 直接追加 CFLAGS 覆盖
+    sed -i 's/TARGET_CFLAGS +=/TARGET_CFLAGS += -Wno-error/' package/libs/mbedtls/Makefile 2>/dev/null || true
     echo "    ✓ mbedtls: 已应用 GCC 14 workaround"
 fi
 
