@@ -35,14 +35,25 @@ safe_sed 's|/bin/login|/bin/login -f root|g' feeds/packages/utils/ttyd/files/tty
 
 # [Workaround] mbedtls + GCC 14 aarch64 编译错误
 # sha256.c ARM crypto 扩展与 musl fortify memset 内联冲突
-# -Werror 由 mbedtls 的 CMakeLists.txt 注入，需要修改 OpenWrt 的包 Makefile
+# 直接禁用 mbedtls 的 ARMv8 CE 硬件加速来绕过该问题
 # 上游修复后可删除此段
 if [ -f "package/libs/mbedtls/Makefile" ]; then
-    # 方法1: 在 OpenWrt Makefile 中添加 CMAKE 选项禁用致命警告
-    sed -i '/CMAKE_OPTIONS/a\\t-DMBEDTLS_FATAL_WARNINGS=OFF \\' package/libs/mbedtls/Makefile
-    # 方法2: 直接追加 CFLAGS 覆盖
-    sed -i 's/TARGET_CFLAGS +=/TARGET_CFLAGS += -Wno-error/' package/libs/mbedtls/Makefile 2>/dev/null || true
-    echo "    ✓ mbedtls: 已应用 GCC 14 workaround"
+    # 在 mbedtls 的编译前加一个 hook，注释掉 config 头文件中的 ARMv8 CE 支持
+    mkdir -p package/libs/mbedtls/patches
+    cat << 'EOF' > package/libs/mbedtls/patches/999-disable-armv8ce-sha256.patch
+--- a/include/mbedtls/mbedtls_config.h
++++ b/include/mbedtls/mbedtls_config.h
+@@ -2965,7 +2965,7 @@
+  *
+  * Requires: MBEDTLS_SHA256_C
+  */
+-#define MBEDTLS_ARMV8CE_SHA256_C
++//#define MBEDTLS_ARMV8CE_SHA256_C
+ 
+ /**
+  * \def MBEDTLS_ARMV8CE_SHA512_C
+EOF
+    echo "    ✓ mbedtls: 已添加 patch 禁用 ARMv8CE_SHA256 硬件加速绕过编译 bug"
 fi
 
 echo ">>> 通用设置应用完成"
