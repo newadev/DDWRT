@@ -1,0 +1,11 @@
+--- a/Makefile
++++ b/Makefile
+@@ -18,6 +18,8 @@ PKG_CONFIG_DEPENDS:= \
+ CONFIG_PKCS11_SUPPORT \
+ CONFIG_MBEDTLS_EXTENDED_TESTS
+ 
++TARGET_CFLAGS += -Wno-error
++
+ include $(INCLUDE_DIR)/package.mk
+ include $(INCLUDE_DIR)/cmake.mk
+ 
