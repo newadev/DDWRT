@@ -35,25 +35,15 @@ safe_sed 's|/bin/login|/bin/login -f root|g' feeds/packages/utils/ttyd/files/tty
 
 # [Workaround] mbedtls + GCC 14 aarch64 编译错误
 # sha256.c ARM crypto 扩展与 musl fortify memset 内联冲突
-# 直接禁用 mbedtls 的 ARMv8 CE 硬件加速来绕过该问题
+# mbedtls 3.6.6 升级导致之前的 patch 行号失效
+# 现在改为通过 CMake 选项全局关闭 Werror 致命警告
 # 上游修复后可删除此段
 if [ -f "package/libs/mbedtls/Makefile" ]; then
-    # 在 mbedtls 的编译前加一个 hook，注释掉 config 头文件中的 ARMv8 CE 支持
-    mkdir -p package/libs/mbedtls/patches
-    cat << 'EOF' > package/libs/mbedtls/patches/999-disable-armv8ce-sha256.patch
---- a/include/mbedtls/mbedtls_config.h
-+++ b/include/mbedtls/mbedtls_config.h
-@@ -2965,7 +2965,7 @@
-  *
-  * Requires: MBEDTLS_SHA256_C
-  */
--#define MBEDTLS_ARMV8CE_SHA256_C
-+//#define MBEDTLS_ARMV8CE_SHA256_C
- 
- /**
-  * \def MBEDTLS_ARMV8CE_SHA512_C
-EOF
-    echo "    ✓ mbedtls: 已添加 patch 禁用 ARMv8CE_SHA256 硬件加速绕过编译 bug"
+    # 移除之前的补丁
+    rm -f package/libs/mbedtls/patches/999-disable-armv8ce-sha256.patch
+    # 在 cmake.mk 引入前增加关闭警告选项
+    sed -i '/include \$(INCLUDE_DIR)\/cmake.mk/i CMAKE_OPTIONS += -DMBEDTLS_FATAL_WARNINGS=OFF' package/libs/mbedtls/Makefile
+    echo "    ✓ mbedtls: 已通过 CMake 选项禁用 FATAL_WARNINGS 绕过编译 bug"
 fi
 
 echo ">>> 通用设置应用完成"
