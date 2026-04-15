@@ -45,5 +45,11 @@ if [ -f "package/libs/mbedtls/Makefile" ]; then
     sed -i '/include \$(INCLUDE_DIR)\/cmake.mk/i CMAKE_OPTIONS += -DMBEDTLS_FATAL_WARNINGS=OFF' package/libs/mbedtls/Makefile
     echo "    ✓ mbedtls: 已通过 CMake 选项禁用 FATAL_WARNINGS 绕过编译 bug"
 fi
-
+# 修复 ip-tiny 与 ip-full 冲突
+# luci-app-arcma 默认依赖 ip-tiny，这会与 passwall 需要的 ip-full 冲突
+arcma_makefile="package/feeds/arcma/luci-app-arcma/Makefile"
+if [ -f "$arcma_makefile" ]; then
+    sed -i 's/+ip-tiny/+ip-full/g' "$arcma_makefile"
+    echo "    ✓ luci-app-arcma: 修改依赖 ip-tiny -> ip-full (避免冲突)"
+fi
 echo ">>> 通用设置应用完成"
