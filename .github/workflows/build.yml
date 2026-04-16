@@ -42,7 +42,7 @@ jobs:
     # 准备阶段
     #--------------------------------------------------
     - name: 检出代码
-      uses: actions/checkout@v6
+      uses: actions/checkout@v4
 
     - name: 解析设备参数
       id: device
@@ -109,7 +109,7 @@ jobs:
     #--------------------------------------------------
     - name: 恢复 Toolchain 缓存
       if: ${{ inputs.clean != true }}
-      uses: actions/cache@v5
+      uses: actions/cache@v4
       with:
         path: |
           /workdir/immortalwrt/staging_dir/toolchain-*
@@ -119,7 +119,7 @@ jobs:
 
     - name: 恢复 ccache 缓存
       if: ${{ inputs.clean != true }}
-      uses: actions/cache@v5
+      uses: actions/cache@v4
       with:
         path: /workdir/immortalwrt/.ccache
         key: cc-${{ steps.device.outputs.target }}-${{ steps.device.outputs.subtarget }}-${{ github.run_id }}
@@ -127,7 +127,7 @@ jobs:
 
     - name: 恢复 dl 缓存
       if: ${{ inputs.clean != true }}
-      uses: actions/cache@v5
+      uses: actions/cache@v4
       with:
         path: /workdir/immortalwrt/dl
         key: dl-${{ hashFiles('devices/common/feeds.conf') }}
@@ -242,7 +242,7 @@ jobs:
 
     - name: 上传 Artifacts
       if: steps.compile.outputs.status == 'success'
-      uses: actions/upload-artifact@v6
+      uses: actions/upload-artifact@v4
       with:
         name: ${{ steps.device.outputs.device }}-${{ env.HASH }}
         path: ${{ env.FIRMWARE }}

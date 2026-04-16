@@ -33,23 +33,5 @@ safe_sed "s/zonename='UTC'/zonename='Asia\/Singapore'/g" package/base-files/file
 # ttyd 免密登录
 safe_sed 's|/bin/login|/bin/login -f root|g' feeds/packages/utils/ttyd/files/ttyd.config
 
-# [Workaround] mbedtls + GCC 14 aarch64 编译错误
-# sha256.c ARM crypto 扩展与 musl fortify memset 内联冲突
-# mbedtls 3.6.6 升级导致之前的 patch 行号失效
-# 现在改为通过 CMake 选项全局关闭 Werror 致命警告
-# 上游修复后可删除此段
-if [ -f "package/libs/mbedtls/Makefile" ]; then
-    # 移除之前的补丁
-    rm -f package/libs/mbedtls/patches/999-disable-armv8ce-sha256.patch
-    # 在 cmake.mk 引入前增加关闭警告选项
-    sed -i '/include \$(INCLUDE_DIR)\/cmake.mk/i CMAKE_OPTIONS += -DMBEDTLS_FATAL_WARNINGS=OFF' package/libs/mbedtls/Makefile
-    echo "    ✓ mbedtls: 已通过 CMake 选项禁用 FATAL_WARNINGS 绕过编译 bug"
-fi
-# 修复 ip-tiny 与 ip-full 冲突
-# luci-app-arcma 默认依赖 ip-tiny，这会与 passwall 需要的 ip-full 冲突
-arcma_makefile="package/feeds/arcma/luci-app-arcma/Makefile"
-if [ -f "$arcma_makefile" ]; then
-    sed -i 's/+ip-tiny/+ip-full/g' "$arcma_makefile"
-    echo "    ✓ luci-app-arcma: 修改依赖 ip-tiny -> ip-full (避免冲突)"
-fi
+
 echo ">>> 通用设置应用完成"
