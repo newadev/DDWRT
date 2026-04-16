@@ -23,7 +23,7 @@ jobs:
     
     steps:
     - name: 清理过期缓存
-      uses: actions/github-script@v7
+      uses: actions/github-script@v8
       with:
         script: |
           const olderThanDays = parseInt('${{ github.event.inputs.older_than_days }}' || '7');

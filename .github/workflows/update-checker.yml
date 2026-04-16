@@ -70,7 +70,7 @@ jobs:
     
     steps:
     - name: 触发编译
-      uses: actions/github-script@v8
+      uses: actions/github-script@v9
       with:
         script: |
           // 所有已注册的设备列表（与 build.yml 中的 options 保持一致）
