@@ -1,5 +1,5 @@
 name: Build ImmortalWrt
-
+run-name: Build ImmortalWrt (${{ inputs.device || 'x86_64' }})
 on:
   push:
     branches: [main]
