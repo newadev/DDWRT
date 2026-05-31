@@ -1,0 +1,72 @@
+name: Cleanup Releases and Runs
+
+on:
+  schedule:
+    - cron: '0 0 * * 0' # 每周日 00:00 UTC 自动执行
+  workflow_dispatch: # 支持手动点击触发
+
+permissions:
+  contents: write # 需要权限以删除 Releases 和 Tags
+  actions: write  # 需要权限以删除 Workflow Runs
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Delete Older Releases and Tags
+        uses: actions/github-script@v9
+        with:
+          script: |
+            const keepLatest = 3;
+            console.log(`正在获取仓库的所有 Releases...`);
+            
+            // 分页获取所有的 releases (默认按创建时间倒序排列)
+            const releases = await github.paginate(github.rest.repos.listReleases, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              per_page: 100
+            });
+            
+            console.log(`共找到 ${releases.length} 个 Releases，策略配置为保留最新的 ${keepLatest} 个。`);
+            
+            // 截取掉最新的几个，剩下的全部作为删除对象
+            const toDelete = releases.slice(keepLatest);
+            
+            if (toDelete.length === 0) {
+              console.log('没有需要清理的旧 Releases，安全跳过。');
+            }
+            
+            for (const release of toDelete) {
+              console.log(`\n>>> 正在删除旧的 Release: ${release.name || release.tag_name} (ID: ${release.id})`);
+              
+              // 1. 删除 Release
+              await github.rest.repos.deleteRelease({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                release_id: release.id
+              });
+              
+              // 2. 尝试连带删除挂钩的 Git Tag
+              if (release.tag_name) {
+                console.log(`    正在销毁关联的 Tag: ${release.tag_name}`);
+                try {
+                  await github.rest.git.deleteRef({
+                    owner: context.repo.owner,
+                    repo: context.repo.repo,
+                    ref: `tags/${release.tag_name}`
+                  });
+                } catch (error) {
+                  // 如果 Tag 不存在或已被删除，打印警告但不阻断工作流
+                  console.warn(`    销毁 Tag 失败 (可能已被其他人手动删除): ${error.message}`);
+                }
+              }
+            }
+            console.log('\n✅ 旧版 Releases 和关联 Tags 清理任务完成！');
+
+      - name: Delete Older Workflow Runs
+        uses: Mattraks/delete-workflow-runs@v2.1.0
+        with:
+          token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          retain_days: 7
+          keep_minimum_runs: 3
