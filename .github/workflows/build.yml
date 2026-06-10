@@ -1,5 +1,5 @@
-name: Build ImmortalWrt
-run-name: Build ImmortalWrt (${{ inputs.device || 'x86_64' }})
+name: Build OpenWrt
+run-name: Build OpenWrt (${{ inputs.device || 'x86_64' }})
 on:
   push:
     branches: [main]
@@ -22,8 +22,8 @@ on:
         default: false
 
 env:
-  REPO_URL: https://github.com/immortalwrt/immortalwrt
-  REPO_BRANCH: master
+  REPO_URL: https://github.com/openwrt/openwrt
+  REPO_BRANCH: openwrt-25.12
   TZ: Asia/Singapore
 
 permissions:
@@ -97,9 +97,9 @@ jobs:
     - name: 克隆源码
       working-directory: /workdir
       run: |
-        git clone --depth=1 -b $REPO_BRANCH $REPO_URL immortalwrt
-        ln -sf /workdir/immortalwrt $GITHUB_WORKSPACE/immortalwrt
-        cd immortalwrt
+        git clone --depth=1 -b $REPO_BRANCH $REPO_URL openwrt
+        ln -sf /workdir/openwrt $GITHUB_WORKSPACE/openwrt
+        cd openwrt
         echo "SRC=$PWD" >> $GITHUB_ENV
         echo "HASH=$(git rev-parse --short HEAD)" >> $GITHUB_ENV
         echo "CCACHE_DIR=$PWD/.ccache" >> $GITHUB_ENV
@@ -112,8 +112,8 @@ jobs:
       uses: actions/cache@v5
       with:
         path: |
-          /workdir/immortalwrt/staging_dir/toolchain-*
-          /workdir/immortalwrt/staging_dir/host
+          /workdir/openwrt/staging_dir/toolchain-*
+          /workdir/openwrt/staging_dir/host
         key: tc-${{ steps.device.outputs.target }}-${{ steps.device.outputs.subtarget }}-${{ env.HASH }}
         restore-keys: tc-${{ steps.device.outputs.target }}-${{ steps.device.outputs.subtarget }}-
 
@@ -121,7 +121,7 @@ jobs:
       if: ${{ inputs.clean != true }}
       uses: actions/cache@v5
       with:
-        path: /workdir/immortalwrt/.ccache
+        path: /workdir/openwrt/.ccache
         key: cc-${{ steps.device.outputs.target }}-${{ steps.device.outputs.subtarget }}-${{ hashFiles('devices/common/base.config') }}
         restore-keys: cc-${{ steps.device.outputs.target }}-${{ steps.device.outputs.subtarget }}-
 
@@ -129,7 +129,7 @@ jobs:
       if: ${{ inputs.clean != true }}
       uses: actions/cache@v5
       with:
-        path: /workdir/immortalwrt/dl
+        path: /workdir/openwrt/dl
         key: dl-${{ hashFiles('devices/common/feeds.conf') }}
         restore-keys: dl-
 

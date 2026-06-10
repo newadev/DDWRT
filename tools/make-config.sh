@@ -9,7 +9,7 @@
 #   ./tools/make-config.sh x86_64
 #   ./tools/make-config.sh cudy-tr3000-v1
 #
-# 前提：项目根目录下已有 immortalwrt 源码目录
+# 前提：项目根目录下已有 openwrt 源码目录
 #=============================================================================
 
 set -eo pipefail
@@ -22,13 +22,13 @@ fi
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
-SRC_DIR="$PROJECT_DIR/immortalwrt"
+SRC_DIR="$PROJECT_DIR/openwrt"
 
 # 检查源码目录是否存在
 if [ ! -d "$SRC_DIR" ]; then
     echo "错误: 未找到源码目录 $SRC_DIR"
     echo "请先在项目根目录执行:"
-    echo "  git clone -b master --single-branch --filter=blob:none https://github.com/immortalwrt/immortalwrt.git"
+    echo "  git clone -b openwrt-25.12 --single-branch --filter=blob:none https://github.com/openwrt/openwrt.git"
     exit 1
 fi
 
@@ -44,7 +44,7 @@ RED='\033[0;31m'
 NC='\033[0m'
 
 echo -e "${GREEN}================================${NC}"
-echo -e "${GREEN} ImmortalWrt 配置生成器 (按设备专属隔离)${NC}"
+echo -e "${GREEN} OpenWrt 配置生成器 (按设备专属隔离)${NC}"
 echo -e "${GREEN} 目标设备目录: devices/$DEVICE${NC}"
 echo -e "${GREEN}================================${NC}"
 

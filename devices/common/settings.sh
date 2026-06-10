@@ -23,6 +23,7 @@ safe_sed() {
 safe_sed 's/192.168.1.1/192.168.30.1/g' package/base-files/files/bin/config_generate
 
 # 默认主机名
+safe_sed 's/OpenWrt/ASUS/g' package/base-files/files/bin/config_generate
 safe_sed 's/ImmortalWrt/ASUS/g' package/base-files/files/bin/config_generate
 
 # 默认时区（新加坡）
