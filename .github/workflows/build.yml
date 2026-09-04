@@ -203,6 +203,7 @@ jobs:
         fi
 
         make defconfig
+        "$GITHUB_WORKSPACE/tools/validate-config.sh" .config
 
     - name: 复制自定义文件 (Files)
       run: |
