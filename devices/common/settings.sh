@@ -31,7 +31,7 @@ safe_sed 's/ImmortalWrt/ASUS/g' package/base-files/files/bin/config_generate
 safe_sed "s/timezone='GMT0'/timezone='SGT-8'/g" package/base-files/files/bin/config_generate
 safe_sed "s/zonename='UTC'/zonename='Asia\/Singapore'/g" package/base-files/files/bin/config_generate
 
-# ttyd 免密登录
+# ttyd 免密登录（⚠️ 提示：在内网便捷使用时开启；若暴露于不受信任的网络，建议注释此行恢复密码登录）
 safe_sed 's|/bin/login|/bin/login -f root|g' feeds/packages/utils/ttyd/files/ttyd.config
 
 # 修复 nikki 软件源中 mihomo-alpha 与 mihomo-meta 互为 CONFLICTS 导致的 Kconfig 循环依赖死锁 Bug

@@ -24,9 +24,11 @@ jobs:
     steps:
     - name: 清理过期缓存
       uses: actions/github-script@v9
+      env:
+        OLDER_THAN_DAYS: ${{ inputs.older_than_days }}
       with:
         script: |
-          const olderThanDays = parseInt('${{ github.event.inputs.older_than_days }}' || '7');
+          const olderThanDays = parseInt(process.env.OLDER_THAN_DAYS || '7', 10) || 7;
           const cutoffDate = new Date();
           cutoffDate.setDate(cutoffDate.getDate() - olderThanDays);
           

@@ -67,7 +67,29 @@ echo -e "${YELLOW}>>> Update & Install feeds...${NC}"
 ./scripts/feeds update -a
 ./scripts/feeds install -a
 
-# 3. 加载基础配置与现有专属配置
+# 3. 应用自定义脚本与补丁（对齐 CI 流水线环境）
+echo -e "${YELLOW}>>> 执行自定义设置脚本与补丁...${NC}"
+if [ -f "$PROJECT_DIR/devices/common/settings.sh" ]; then
+    chmod +x "$PROJECT_DIR/devices/common/settings.sh"
+    "$PROJECT_DIR/devices/common/settings.sh"
+fi
+if [ -f "$DEVICE_DIR/settings.sh" ]; then
+    chmod +x "$DEVICE_DIR/settings.sh"
+    "$DEVICE_DIR/settings.sh"
+fi
+
+if [ -d "$PROJECT_DIR/devices/common/patches" ]; then
+    for p in "$PROJECT_DIR/devices/common/patches/"*.patch; do
+        [ -f "$p" ] && git apply "$p" 2>/dev/null || true
+    done
+fi
+if [ -d "$DEVICE_DIR/patches" ]; then
+    for p in "$DEVICE_DIR/patches/"*.patch; do
+        [ -f "$p" ] && git apply "$p" 2>/dev/null || true
+    done
+fi
+
+# 4. 加载基础配置与现有专属配置
 echo -e "${YELLOW}>>> 预加载配置...${NC}"
 rm -f .config
 
@@ -83,7 +105,7 @@ fi
 
 make defconfig
 
-# 4. 打开 menuconfig
+# 5. 打开 menuconfig
 echo ""
 echo -e "${GREEN}================================${NC}"
 echo -e "${GREEN} 操作说明：${NC}"
@@ -97,9 +119,11 @@ read -p "按 Enter 打开配置界面..."
 
 make menuconfig
 
-# 5. 保存并剔除 common 部分的内容
+# 6. 保存并剔除 common 部分的内容
 echo -e "${YELLOW}>>> 剥离出该设备专属的配置差异...${NC}"
 TEMP_CONFIG="$(mktemp)"
+trap 'rm -f "$TEMP_CONFIG"' EXIT
+
 ./scripts/diffconfig.sh > "$TEMP_CONFIG"
 
 # (简单的剔除逻辑：如果在 common 里已经有了，就不算作设备的 specific config)
@@ -110,6 +134,7 @@ else
 fi
 
 rm -f "$TEMP_CONFIG"
+trap - EXIT
 
 # 如果文件变空了，也要保持为空
 if [ ! -s "$DEVICE_DIR/target.config" ]; then

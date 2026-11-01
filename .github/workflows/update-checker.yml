@@ -33,14 +33,23 @@ jobs:
       id: check
       run: |
         # 获取最新 commit hash
-        NEW_HASH=$(git ls-remote $REPO_URL refs/heads/$REPO_BRANCH | cut -f1 | head -c7)
+        RAW_HASH=$(git ls-remote "$REPO_URL" "refs/heads/$REPO_BRANCH" | cut -f1 | head -c7)
+        echo "远端输出 hash: '$RAW_HASH'"
+        
+        # 严格校验 hash 格式 (必须为有效 7 位 16 进制字符)
+        if [[ ! "$RAW_HASH" =~ ^[0-9a-f]{7}$ ]]; then
+          echo "❌ 获取上游版本号失败或远端异常: '$RAW_HASH'" >&2
+          exit 1
+        fi
+        
+        NEW_HASH="$RAW_HASH"
         echo "最新版本: $NEW_HASH"
         echo "new_hash=$NEW_HASH" >> $GITHUB_OUTPUT
         
         # 读取上次记录的 hash
         LAST_HASH=""
         if [ -f ".last_source_hash" ]; then
-          LAST_HASH=$(cat .last_source_hash)
+          LAST_HASH=$(cat .last_source_hash | tr -d '[:space:]')
         fi
         echo "上次版本: $LAST_HASH"
         
@@ -55,12 +64,15 @@ jobs:
 
     - name: 记录新版本
       if: steps.check.outputs.has_update == 'true'
+      env:
+        NEW_HASH: ${{ steps.check.outputs.new_hash }}
       run: |
-        echo "${{ steps.check.outputs.new_hash }}" > .last_source_hash
+        echo "$NEW_HASH" > .last_source_hash
         git config user.name "GitHub Action"
         git config user.email "action@github.com"
-        git add -f .last_source_hash
-        git commit -m "chore: 更新源码版本记录 ${{ steps.check.outputs.new_hash }}" || true
+        git pull --rebase || true
+        git add .last_source_hash
+        git commit -m "chore: 更新源码版本记录 $NEW_HASH" || true
         git push || true
 
   trigger-build:
@@ -74,7 +86,7 @@ jobs:
       with:
         script: |
           // 所有已注册的设备列表（与 build.yml 中的 options 保持一致）
-          const devices = ['x86_64', 'netcore-n60-pro', 'cudy-tr3000-v1', 'glinet-gl-mt3000'];
+          const devices = ['x86_64', 'netcore-n60-pro', 'cudy-tr3000-v1', 'glinet-gl-mt3000', '360-t7'];
           
           console.log(`检测到上游更新，开始触发 ${devices.length} 台设备的编译...`);
           

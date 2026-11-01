@@ -17,10 +17,12 @@
 ```text
 ├── .github/workflows/          # GitHub Actions 工作流配置文件
 │   ├── build.yml               # 固件编译流水线
+│   ├── clean-releases-and-runs.yml # 历史 Release 与构建记录定期清理流水线 (按设备独立保留)
 │   ├── cache-cleanup.yml       # 缓存清理流水线
 │   └── update-checker.yml      # 上游源码更新检测流水线
 ├── tools/
-│   └── make-config.sh          # 本地设备配置生成脚本
+│   ├── make-config.sh          # 本地设备配置生成脚本
+│   └── validate-config.sh      # 固件互斥配置预校验脚本
 └── devices/                    # 设备配置目录
     ├── common/                 # 通用配置底座
     │   ├── base.config         # 基础软件包配置（如 LuCI 界面等）
@@ -28,7 +30,7 @@
     │   ├── settings.sh         # 通用系统初始脚本（默认 IP、时区等）
     │   ├── files/              # 通用覆盖文件目录
     │   └── patches/            # 通用源码补丁目录
-    └── <device-name>/          # 专属设备配置目录（如 x86_64, glinet-gl-mt3000）
+    └── <device-name>/          # 专属设备配置目录（如 x86_64, glinet-gl-mt3000, 360-t7）
         ├── target.config       # 设备专属软件包与架构配置
         ├── settings.sh         # 设备专属系统初始脚本（可选）
         ├── files/              # 设备专属覆盖文件目录（可选）
@@ -46,8 +48,8 @@
 ### 2. 手动触发编译
 1. 在仓库的 **Actions** 页面，选择左侧的 `Build OpenWrt` 工作流。
 2. 点击右侧的 `Run workflow` 按钮。
-3. 选择目标设备（默认值为 `x86_64`），然后点击 `Run workflow` 开始编译。
-4. 编译完成后，可在仓库的 **Releases** 页面下载固件。
+3. 选择目标设备（可选 `x86_64`、`netcore-n60-pro`、`cudy-tr3000-v1`、`glinet-gl-mt3000`、`360-t7`），点击 `Run workflow` 开始编译。
+4. 编译完成后，可在仓库的 **Releases** 页面下载固件和校验文件。
 
 ---
 
@@ -64,13 +66,15 @@
    在弹出的 menuconfig 界面中选择目标硬件架构（Target System / Subtarget）及所需软件包，保存并退出。脚本将自动提取配置差异并保存至 `devices/asus-ax6000/target.config`。
 
 2. **在工作流中注册设备**：
-   修改 `.github/workflows/build.yml` 文件：
-   - 在 `options` 列表中添加设备名：`- asus-ax6000`
-   - 在 `device` 解析步骤的 `DEVICES` 映射表中添加设备的硬件参数解析规则：
-     ```bash
-     ["asus-ax6000"]="mediatek|filogic|aarch64_cortex-a53|asus_ax6000"
-     ```
-     *(格式：`"Target|Subtarget|Arch|Profile"`)*
+   - 修改 `.github/workflows/build.yml` 文件：
+     - 在 `options` 列表中添加设备名：`- asus-ax6000`
+     - 在 `device` 解析步骤的 `DEVICES` 映射表中添加设备的硬件参数解析规则：
+       ```bash
+       ["asus-ax6000"]="mediatek|filogic|aarch64_cortex-a53|asus_ax6000"
+       ```
+       *(格式：`"Target|Subtarget|Arch|Profile"`)*
+   - 修改 `.github/workflows/update-checker.yml` 文件：
+     - 在 `trigger-build` 步骤的 `devices` 数组中添加 `'asus-ax6000'`，使定时更新检查能自动触发该设备的构建。
 
 3. **提交并推送代码**：
    ```bash
@@ -84,13 +88,13 @@
 ## 常见问题与定制
 
 **Q: 如何修改所有固件的默认管理 IP 地址？**  
-修改 `devices/common/settings.sh` 中的 IP 替换规则：
+当前通用默认 IP 为 `192.168.30.1`。若需修改，编辑 `devices/common/settings.sh` 中的替换规则：
 ```bash
 safe_sed 's/192.168.1.1/192.168.10.1/g' package/base-files/files/bin/config_generate
 ```
 
 **Q: 如何为特定设备设置不同的管理 IP 地址？**  
-在设备专属目录（如 `devices/glinet-gl-mt3000/settings.sh`）中添加独立的替换脚本：
+在设备专属目录（如 `devices/glinet-gl-mt3000/settings.sh`）中创建独立的替换脚本：
 ```bash
 #!/bin/bash
 sed -i 's/192.168.30.1/192.168.8.1/g' package/base-files/files/bin/config_generate

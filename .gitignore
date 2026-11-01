@@ -1,0 +1,11 @@
+# OpenWrt 源码目录（本地克隆，不提交到仓库）
+logs/
+openwrt/
+openwrt-*/
+immortalwrt/
+
+# 系统杂项
+.DS_Store
+*.swp
+*.swo
+*~

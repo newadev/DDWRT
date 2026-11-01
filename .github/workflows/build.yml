@@ -1,13 +1,10 @@
 name: Build OpenWrt
 run-name: Build OpenWrt (${{ inputs.device || 'x86_64' }})
 on:
-  push:
-    branches: [main]
-    paths: ['devices/**', '.github/workflows/build.yml']
   workflow_dispatch:
     inputs:
       device:
-        description: '设备'
+        description: '目标设备'
         required: true
         default: 'x86_64'
         type: choice
@@ -16,8 +13,9 @@ on:
           - netcore-n60-pro
           - cudy-tr3000-v1
           - glinet-gl-mt3000
+          - 360-t7
       clean:
-        description: '全新编译'
+        description: '全新编译 (不使用缓存)'
         type: boolean
         default: false
 
@@ -46,16 +44,24 @@ jobs:
 
     - name: 解析设备参数
       id: device
+      env:
+        DEVICE_INPUT: ${{ inputs.device }}
       run: |
-        DEVICE="${{ inputs.device || 'x86_64' }}"
+        DEVICE="${DEVICE_INPUT:-x86_64}"
         
-        # 设备映射表
+        # 设备映射表 (Target|Subtarget|Arch|Profile)
         declare -A DEVICES=(
           ["x86_64"]="x86|64|x86_64|generic"
           ["netcore-n60-pro"]="mediatek|filogic|aarch64_cortex-a53|netcore_n60-pro"
           ["cudy-tr3000-v1"]="mediatek|filogic|aarch64_cortex-a53|cudy_tr3000-v1"
           ["glinet-gl-mt3000"]="mediatek|filogic|aarch64_cortex-a53|glinet_gl-mt3000"
+          ["360-t7"]="mediatek|filogic|aarch64_cortex-a53|qihoo_360t7"
         )
+        
+        if [ -z "${DEVICES[$DEVICE]:-}" ]; then
+          echo "❌ 未知设备: $DEVICE" >&2
+          exit 1
+        fi
         
         IFS='|' read -r TARGET SUBTARGET ARCH PROFILE <<< "${DEVICES[$DEVICE]}"
         
@@ -64,6 +70,7 @@ jobs:
         echo "subtarget=$SUBTARGET" >> $GITHUB_OUTPUT
         echo "arch=$ARCH" >> $GITHUB_OUTPUT
         echo "profile=$PROFILE" >> $GITHUB_OUTPUT
+        echo "DEVICE=$DEVICE" >> $GITHUB_ENV
 
     - name: 释放磁盘空间 (Maximize Build Space)
       uses: endersonmenezes/free-disk-space@v3
@@ -114,24 +121,30 @@ jobs:
         path: |
           /workdir/openwrt/staging_dir/toolchain-*
           /workdir/openwrt/staging_dir/host
-        key: tc-${{ steps.device.outputs.target }}-${{ steps.device.outputs.subtarget }}-${{ env.HASH }}
-        restore-keys: tc-${{ steps.device.outputs.target }}-${{ steps.device.outputs.subtarget }}-
+        key: tc-${{ steps.device.outputs.target }}-${{ steps.device.outputs.subtarget }}-${{ env.HASH }}-${{ github.run_id }}
+        restore-keys: |
+          tc-${{ steps.device.outputs.target }}-${{ steps.device.outputs.subtarget }}-${{ env.HASH }}-
+          tc-${{ steps.device.outputs.target }}-${{ steps.device.outputs.subtarget }}-
 
     - name: 恢复 ccache 缓存
       if: ${{ inputs.clean != true }}
       uses: actions/cache@v5
       with:
         path: /workdir/openwrt/.ccache
-        key: cc-${{ steps.device.outputs.target }}-${{ steps.device.outputs.subtarget }}-${{ hashFiles('devices/common/base.config') }}
-        restore-keys: cc-${{ steps.device.outputs.target }}-${{ steps.device.outputs.subtarget }}-
+        key: cc-${{ steps.device.outputs.target }}-${{ steps.device.outputs.subtarget }}-${{ hashFiles('devices/common/base.config') }}-${{ github.run_id }}
+        restore-keys: |
+          cc-${{ steps.device.outputs.target }}-${{ steps.device.outputs.subtarget }}-${{ hashFiles('devices/common/base.config') }}-
+          cc-${{ steps.device.outputs.target }}-${{ steps.device.outputs.subtarget }}-
 
     - name: 恢复 dl 缓存
       if: ${{ inputs.clean != true }}
       uses: actions/cache@v5
       with:
         path: /workdir/openwrt/dl
-        key: dl-${{ hashFiles('devices/common/feeds.conf') }}
-        restore-keys: dl-
+        key: dl-${{ hashFiles('devices/common/feeds.conf') }}-${{ github.run_id }}
+        restore-keys: |
+          dl-${{ hashFiles('devices/common/feeds.conf') }}-
+          dl-
 
     #--------------------------------------------------
     # 配置阶段
@@ -140,13 +153,13 @@ jobs:
       run: |
         cd $SRC
         echo ">>> 加载 feeds.conf"
-        # 1. 尝试加载通用 feeds
+        # 1. 加载通用 feeds
         if [ -f "$GITHUB_WORKSPACE/devices/common/feeds.conf" ]; then
             cp "$GITHUB_WORKSPACE/devices/common/feeds.conf" feeds.conf.default
         fi
-        # 2. 尝试加载设备专属 feeds (覆盖)
-        if [ -f "$GITHUB_WORKSPACE/devices/${{ inputs.device || 'x86_64' }}/feeds.conf" ]; then
-            cp "$GITHUB_WORKSPACE/devices/${{ inputs.device || 'x86_64' }}/feeds.conf" feeds.conf.default
+        # 2. 追加设备专属 feeds (若存在)
+        if [ -f "$GITHUB_WORKSPACE/devices/$DEVICE/feeds.conf" ]; then
+            cat "$GITHUB_WORKSPACE/devices/$DEVICE/feeds.conf" >> feeds.conf.default
         fi
         cat feeds.conf.default || true
 
@@ -165,9 +178,9 @@ jobs:
             "$GITHUB_WORKSPACE/devices/common/settings.sh"
         fi
         # 2. 执行设备专属脚本
-        if [ -f "$GITHUB_WORKSPACE/devices/${{ inputs.device || 'x86_64' }}/settings.sh" ]; then
-            chmod +x "$GITHUB_WORKSPACE/devices/${{ inputs.device || 'x86_64' }}/settings.sh"
-            "$GITHUB_WORKSPACE/devices/${{ inputs.device || 'x86_64' }}/settings.sh"
+        if [ -f "$GITHUB_WORKSPACE/devices/$DEVICE/settings.sh" ]; then
+            chmod +x "$GITHUB_WORKSPACE/devices/$DEVICE/settings.sh"
+            "$GITHUB_WORKSPACE/devices/$DEVICE/settings.sh"
         fi
 
     - name: 应用自定义补丁 (Patches)
@@ -180,8 +193,8 @@ jobs:
             done
         fi
         # 2. 挂载设备专属补丁
-        if [ -d "$GITHUB_WORKSPACE/devices/${{ inputs.device || 'x86_64' }}/patches" ]; then
-            for p in "$GITHUB_WORKSPACE/devices/${{ inputs.device || 'x86_64' }}/patches/"*.patch; do
+        if [ -d "$GITHUB_WORKSPACE/devices/$DEVICE/patches" ]; then
+            for p in "$GITHUB_WORKSPACE/devices/$DEVICE/patches/"*.patch; do
                 [ -f "$p" ] && git apply "$p" || true
             done
         fi
@@ -198,8 +211,8 @@ jobs:
         fi
         
         # 2. 加载设备专属配置
-        if [ -f "$GITHUB_WORKSPACE/devices/${{ inputs.device || 'x86_64' }}/target.config" ]; then
-            cat "$GITHUB_WORKSPACE/devices/${{ inputs.device || 'x86_64' }}/target.config" >> .config
+        if [ -f "$GITHUB_WORKSPACE/devices/$DEVICE/target.config" ]; then
+            cat "$GITHUB_WORKSPACE/devices/$DEVICE/target.config" >> .config
         fi
 
         make defconfig
@@ -214,15 +227,18 @@ jobs:
             cp -r "$GITHUB_WORKSPACE/devices/common/files/"* ./files/ 2>/dev/null || true
         fi
         # 2. 复制设备专属文件 (覆盖)
-        if [ -d "$GITHUB_WORKSPACE/devices/${{ inputs.device || 'x86_64' }}/files" ]; then
-            cp -r "$GITHUB_WORKSPACE/devices/${{ inputs.device || 'x86_64' }}/files/"* ./files/ 2>/dev/null || true
+        if [ -d "$GITHUB_WORKSPACE/devices/$DEVICE/files" ]; then
+            cp -r "$GITHUB_WORKSPACE/devices/$DEVICE/files/"* ./files/ 2>/dev/null || true
         fi
 
     #--------------------------------------------------
     # 编译阶段
     #--------------------------------------------------
     - name: 下载软件包
-      run: cd $SRC && make download -j$(nproc) || make download -j1 V=s
+      run: |
+        cd $SRC
+        make download -j$(nproc) || make download -j1 V=s
+        find dl -size -1024c -exec rm -f {} \;
 
     - name: 编译固件
       id: compile
@@ -239,7 +255,10 @@ jobs:
       run: |
         cd $SRC/bin/targets/${{ steps.device.outputs.target }}/${{ steps.device.outputs.subtarget }}
         rm -rf packages *.buildinfo *.manifest *.json sha256sums
+        # 重新生成当前目录下全部可用固件文件的精确 SHA256 校验和
+        sha256sum * > sha256sums 2>/dev/null || true
         echo "FIRMWARE=$PWD" >> $GITHUB_ENV
+        echo "BUILD_DATE=$(TZ='Asia/Shanghai' date +'%Y-%m-%d %H:%M:%S')" >> $GITHUB_ENV
 
     - name: 上传 Artifacts
       if: steps.compile.outputs.status == 'success'
@@ -255,4 +274,24 @@ jobs:
       with:
         tag_name: ${{ steps.device.outputs.device }}-${{ github.run_number }}
         name: ${{ steps.device.outputs.device }} (${{ env.HASH }})
+        body: |
+          ### 固件构建信息
+          - **设备型号**: `${{ steps.device.outputs.device }}`
+          - **目标平台**: `${{ steps.device.outputs.target }}/${{ steps.device.outputs.subtarget }}`
+          - **源码版本**: [openwrt@${{ env.HASH }}](https://github.com/openwrt/openwrt/commit/${{ env.HASH }})
+          - **构建序号**: `#${{ github.run_number }}`
+          - **构建时间**: ${{ env.BUILD_DATE }} (UTC+8)
+
+          > ⚠️ 刷机或系统升级前请先比对校验包内的 `sha256sums`，确保下载文件完整无损。
         files: ${{ env.FIRMWARE }}/*
+
+    - name: 上传失败日志 (排错用)
+      if: failure()
+      uses: actions/upload-artifact@v7
+      with:
+        name: failure-${{ steps.device.outputs.device || 'unknown' }}-${{ env.HASH || 'unknown' }}
+        path: |
+          /workdir/openwrt/.config
+          /workdir/openwrt/logs/
+        if-no-files-found: ignore
+        retention-days: 3

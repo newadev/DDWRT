@@ -26,8 +26,19 @@ check_conflict() {
     fi
 }
 
-# ip-full and ip-tiny provide the same ip utility and cannot coexist.
+# 1. ip-full and ip-tiny provide the same ip utility and cannot coexist.
 check_conflict ip-full ip-tiny
+
+# 2. dnsmasq variants
+check_conflict dnsmasq dnsmasq-full
+
+# 3. iptables legacy vs iptables-nft
+check_conflict iptables iptables-nft
+
+# 4. wpad variants (e.g. wpad-openssl vs wpad-basic-mbedtls)
+check_conflict wpad-openssl wpad-basic-mbedtls
+check_conflict wpad-openssl wpad-basic-wolfssl
+check_conflict wpad wpad-openssl
 
 if (( failed )); then
     echo "Configuration validation failed: $CONFIG_FILE" >&2
