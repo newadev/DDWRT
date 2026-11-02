@@ -1,6 +1,6 @@
 name: Cache Cleanup
 
-on:
+'on':
   # 每周一 UTC 时间 0:00 清理
   schedule:
     - cron: '0 0 * * 1'
@@ -20,6 +20,7 @@ permissions:
 jobs:
   cleanup:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     
     steps:
     - name: 清理过期缓存
@@ -28,7 +29,11 @@ jobs:
         OLDER_THAN_DAYS: ${{ inputs.older_than_days }}
       with:
         script: |
-          const olderThanDays = parseInt(process.env.OLDER_THAN_DAYS || '7', 10) || 7;
+          const olderThanDays = Number(process.env.OLDER_THAN_DAYS || '7');
+          if (!Number.isSafeInteger(olderThanDays) || olderThanDays < 1) {
+            core.setFailed('清理天数必须为正整数');
+            return;
+          }
           const cutoffDate = new Date();
           cutoffDate.setDate(cutoffDate.getDate() - olderThanDays);
           

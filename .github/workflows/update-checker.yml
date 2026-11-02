@@ -1,16 +1,17 @@
 name: Check Source Update
 
-on:
-  # 每周五 UTC 时间 0:00 检查
+'on':
   schedule:
     - cron: '0 0 * * 5'
-  
-  # 手动触发
   workflow_dispatch:
 
 permissions:
   contents: write
   actions: write
+
+concurrency:
+  group: source-update
+  cancel-in-progress: false
 
 env:
   REPO_URL: https://github.com/openwrt/openwrt
@@ -18,97 +19,71 @@ env:
 
 jobs:
   check:
-    runs-on: ubuntu-latest
-    outputs:
-      has_update: ${{ steps.check.outputs.has_update }}
-      new_hash: ${{ steps.check.outputs.new_hash }}
-    
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
     steps:
     - name: 检出代码
       uses: actions/checkout@v6
-      with:
-        fetch-depth: 1
 
     - name: 检查上游更新
       id: check
+      shell: bash
       run: |
-        # 获取最新 commit hash
-        RAW_HASH=$(git ls-remote "$REPO_URL" "refs/heads/$REPO_BRANCH" | cut -f1 | head -c7)
-        echo "远端输出 hash: '$RAW_HASH'"
-        
-        # 严格校验 hash 格式 (必须为有效 7 位 16 进制字符)
-        if [[ ! "$RAW_HASH" =~ ^[0-9a-f]{7}$ ]]; then
-          echo "❌ 获取上游版本号失败或远端异常: '$RAW_HASH'" >&2
+        NEW_HASH=$(git ls-remote "$REPO_URL" "refs/heads/$REPO_BRANCH" | awk 'NR == 1 { print $1 }')
+        if [[ ! "$NEW_HASH" =~ ^[0-9a-f]{40}$ ]]; then
+          echo "ERROR: invalid upstream commit: $NEW_HASH" >&2
           exit 1
         fi
-        
-        NEW_HASH="$RAW_HASH"
-        echo "最新版本: $NEW_HASH"
-        echo "new_hash=$NEW_HASH" >> $GITHUB_OUTPUT
-        
-        # 读取上次记录的 hash
         LAST_HASH=""
-        if [ -f ".last_source_hash" ]; then
-          LAST_HASH=$(cat .last_source_hash | tr -d '[:space:]')
+        if [[ -f .last_source_hash ]]; then
+          LAST_HASH=$(tr -d '[:space:]' < .last_source_hash)
         fi
-        echo "上次版本: $LAST_HASH"
-        
-        # 比较
-        if [ "$NEW_HASH" != "$LAST_HASH" ]; then
-          echo "检测到更新!"
-          echo "has_update=true" >> $GITHUB_OUTPUT
+        echo "new_hash=$NEW_HASH" >> "$GITHUB_OUTPUT"
+        if [[ "$LAST_HASH" == "$NEW_HASH" ]]; then
+          echo "has_update=false" >> "$GITHUB_OUTPUT"
         else
-          echo "没有更新"
-          echo "has_update=false" >> $GITHUB_OUTPUT
+          echo "has_update=true" >> "$GITHUB_OUTPUT"
         fi
 
-    - name: 记录新版本
+    # Do not advance the watermark unless every dispatch was accepted.
+    - name: 触发全部设备编译
       if: steps.check.outputs.has_update == 'true'
+      uses: actions/github-script@v9
       env:
         NEW_HASH: ${{ steps.check.outputs.new_hash }}
-      run: |
-        echo "$NEW_HASH" > .last_source_hash
-        git config user.name "GitHub Action"
-        git config user.email "action@github.com"
-        git pull --rebase || true
-        git add .last_source_hash
-        git commit -m "chore: 更新源码版本记录 $NEW_HASH" || true
-        git push || true
-
-  trigger-build:
-    needs: check
-    if: needs.check.outputs.has_update == 'true'
-    runs-on: ubuntu-latest
-    
-    steps:
-    - name: 触发编译
-      uses: actions/github-script@v9
       with:
         script: |
-          // 所有已注册的设备列表（与 build.yml 中的 options 保持一致）
-          const devices = ['x86_64', 'netcore-n60-pro', 'cudy-tr3000-v1', 'glinet-gl-mt3000', '360-t7'];
-          
-          console.log(`检测到上游更新，开始触发 ${devices.length} 台设备的编译...`);
-          
+          const fs = require('fs');
+          const devices = fs.readdirSync('devices')
+            .filter(device => device !== 'common' && fs.existsSync('devices/' + device + '/target.config'))
+            .sort();
+          if (!devices.length) throw new Error('No configured devices found');
           for (const device of devices) {
-            console.log(`  → 触发设备: ${device}`);
             await github.rest.actions.createWorkflowDispatch({
               owner: context.repo.owner,
               repo: context.repo.repo,
               workflow_id: 'build.yml',
-              ref: 'main',
-              inputs: {
-                device: device,
-                clean: 'false'
-              }
+              ref: context.ref.replace('refs/heads/', ''),
+              inputs: { device, clean: 'false', source_ref: process.env.NEW_HASH }
             });
           }
-          
-          console.log(`全部 ${devices.length} 台设备的编译已触发!`);
-          
           await core.summary
             .addHeading('源码更新检测')
-            .addRaw(`检测到上游更新 (${process.env.NEW_HASH || 'unknown'})，已触发 ${devices.length} 台设备的编译: ${devices.join(', ')}。`)
+            .addRaw('已固定源码 ' + process.env.NEW_HASH + '，触发设备：' + devices.join(', '))
             .write();
+
+    - name: 记录已触发的源码版本
+      if: steps.check.outputs.has_update == 'true'
       env:
-        NEW_HASH: ${{ needs.check.outputs.new_hash }}
+        NEW_HASH: ${{ steps.check.outputs.new_hash }}
+      shell: bash
+      run: |
+        git config user.name "github-actions[bot]"
+        git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+        git pull --ff-only origin "$GITHUB_REF_NAME"
+        printf '%s\n' "$NEW_HASH" > .last_source_hash
+        git add .last_source_hash
+        if ! git diff --cached --quiet; then
+          git commit -m "chore: 更新源码版本记录 $NEW_HASH"
+          git push origin "HEAD:$GITHUB_REF_NAME"
+        fi
